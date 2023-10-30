@@ -13,8 +13,11 @@ if TYPE_CHECKING:
     from pika.spec import Basic
 
 
-def send_message(routing_key: str, message: str):
-    connection = pika.BlockingConnection()
+def send_message(routing_key: str, message: str, custom_connection:pika.BlockingConnection=None):
+    if custom_connection is not None:
+        connection = custom_connection
+    else:
+        connection = pika.BlockingConnection()
     channel = connection.channel()
     exchange_name = routing_key.split('.')[0]
     channel.exchange_declare(exchange=exchange_name, exchange_type='topic')
@@ -22,7 +25,8 @@ def send_message(routing_key: str, message: str):
     channel.basic_publish(exchange=exchange_name,
                           routing_key=routing_key,
                           body=message)
-    connection.close()
+    if custom_connection is None:
+        connection.close()
 
 
 def listen_to(
