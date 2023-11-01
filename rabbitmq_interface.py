@@ -32,7 +32,7 @@ def send_message(routing_key: str, message: str, custom_connection:pika.Blocking
 def listen_to(
     exchange: str,
     listen_map: Dict[str, str],
-    callback: Callable[[str, str, "Basic.Deliver", "BasicProperties"], Any],
+    callback: Callable[[str, bytes, "Basic.Deliver", "BasicProperties"], Any],
     logging_interface_obj: Any = None
 ):
     """
@@ -72,7 +72,7 @@ class WrappedConsumer(object):
         self,
         exchange: str,
         bindings: Dict[str, str],
-        callback: Callable[[str, str, "Basic.Deliver", "BasicProperties"], Any],
+        callback: Callable[[str, bytes, "Basic.Deliver", "BasicProperties"], Any],
         logging_interface_obj=None
     ):
         """Create a new instance of the consumer class, passing in the AMQP
@@ -105,7 +105,7 @@ class WrappedConsumer(object):
         else:
             self.logger = logging_interface_obj
 
-    def _do_callback(self, routing_key: str, message: str, deliver: "Basic.Deliver", properties: "BasicProperties") -> None:
+    def _do_callback(self, routing_key: str, message: bytes, deliver: "Basic.Deliver", properties: "BasicProperties") -> None:
         self._callback(routing_key, message, deliver, properties)
 
     def connect(self):
