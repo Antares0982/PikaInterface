@@ -39,9 +39,9 @@ def listen_to(
     call consumer.stop() to stop listening.
 
     Arguments:
-        exchange {str} -- exchange name, generally, should be routing_key.split('.')[0]
-        listen_map {Dict[str, str]} -- {queue_name: routing_key}
-        callback {Callable[[str, str, "Basic.Deliver", "BasicProperties"], Any]} -- callback function. 
+        exchange -- exchange name, generally, should be routing_key.split('.')[0]
+        listen_map -- {queue_name: routing_key}
+        callback -- callback function.
             args: routing_key, message, deliver, properties
     """
 
