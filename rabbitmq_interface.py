@@ -1,7 +1,7 @@
 import asyncio
 import functools
 import threading
-from typing import TYPE_CHECKING, Any, Callable, Dict
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 import pika
 import pika.exceptions
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from pika.spec import Basic
 
 
-def send_message(routing_key: str, message: str, custom_connection:pika.BlockingConnection=None):
+def send_message(routing_key: str, message: str, custom_connection: pika.BlockingConnection = None):
     if custom_connection is not None:
         connection = custom_connection
     else:
@@ -46,7 +46,9 @@ def listen_to(
     """
 
     consumer = WrappedConsumer(exchange, listen_map, callback, logging_interface_obj)
-    threading.Thread(target=consumer.run).start()
+    th = threading.Thread(target=consumer.run)
+    consumer.register_thread(th)
+    th.start()
     return consumer
 
 
@@ -104,9 +106,14 @@ class WrappedConsumer(object):
             self.logger: logging.Logger = logging.getLogger(__name__)
         else:
             self.logger = logging_interface_obj
+        #
+        self._thread: Optional[threading.Thread] = None
 
     def _do_callback(self, routing_key: str, message: bytes, deliver: "Basic.Deliver", properties: "BasicProperties") -> None:
         self._callback(routing_key, message, deliver, properties)
+
+    def register_thread(self, th: threading.Thread) -> None:
+        self._thread = th
 
     def connect(self):
         """This method connects to RabbitMQ, returning the connection handle.
@@ -455,6 +462,9 @@ class WrappedConsumer(object):
                 self.stop_consuming()
             else:
                 self._connection.ioloop.stop()
+            if self._thread is not None:
+                self._thread.join()
+                self._thread = None
             self.logger.info('Stopped')
 
 
