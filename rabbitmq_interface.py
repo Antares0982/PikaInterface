@@ -52,6 +52,24 @@ def listen_to(
     return consumer
 
 
+__connection = None
+
+
+def get_substained_connection(**kwargs):
+    global __connection
+    if __connection is None:
+        parameters = pika.ConnectionParameters(heartbeat=60, **kwargs)
+        __connection = pika.BlockingConnection(parameters)
+    return __connection
+
+
+def close_substained_connection():
+    global __connection
+    if __connection is not None:
+        __connection.close()
+        __connection = None
+
+
 class WrappedConsumer(object):
     """
     This class is taken from Pika's example code.
