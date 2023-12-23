@@ -510,7 +510,7 @@ class PikaMessageQueue(object):
     def run(self) -> None:
         while not self._stopped:
             try:
-                routing_key, message = self._queue.get(block=True)
+                routing_key, message = self._queue.get(block=True, timeout=0.5)
             except queue.Empty:
                 continue  # maybe false awakened by self.stop()
             if not self._stopped:
