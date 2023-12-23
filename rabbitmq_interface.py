@@ -1,12 +1,14 @@
 import asyncio
 import functools
+import queue
 import threading
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 import pika
 import pika.exceptions
 from pika.adapters.asyncio_connection import AsyncioConnection
 from pika.exchange_type import ExchangeType
+
 
 if TYPE_CHECKING:
     from pika import BasicProperties
@@ -495,3 +497,30 @@ class NoLogInterface(object):
 
     def error(self, *args, **kwargs):
         pass
+
+
+class PikaMessageQueue(object):
+    def __init__(self) -> None:
+        self._queue: queue.Queue[Tuple[str, str]] = queue.Queue()
+        self._stopped = False
+
+    def push(self, routing_key: str, message: str) -> None:
+        self._queue.put((routing_key, message))
+
+    def run(self) -> None:
+        while not self._stopped:
+            try:
+                routing_key, message = self._queue.get(block=True)
+            except queue.Empty:
+                continue  # maybe false awakened by self.stop()
+            if not self._stopped:
+                send_message(routing_key, message, get_substained_connection())
+        with self._queue.not_full:
+            self._queue.not_full.notify()  # wake the caller thread of self.stop()
+
+    def stop(self) -> None:
+        with self._queue.not_full:
+            self._stopped = True
+            self._queue.not_empty.notify()  # wake the runner thread
+            self._queue.not_full.wait(1.)  # wait for the runner thread to stop gracefully
+        close_substained_connection()  # safe to close the connection now
