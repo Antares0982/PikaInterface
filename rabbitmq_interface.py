@@ -2,11 +2,11 @@ import asyncio
 import functools
 import queue
 import threading
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union
 
-import pika
-import pika.exceptions
+from pika import BlockingConnection, ConnectionParameters, SelectConnection
 from pika.adapters.asyncio_connection import AsyncioConnection
+from pika.exceptions import ConnectionClosedByClient
 from pika.exchange_type import ExchangeType
 
 
@@ -15,14 +15,14 @@ if TYPE_CHECKING:
     from pika.spec import Basic
 
 
-def send_message(routing_key: str, message: str, custom_connection: pika.BlockingConnection = None):
+def send_message(routing_key: str, message: str, custom_connection: Optional[Union[SelectConnection, BlockingConnection]] = None):
     if custom_connection is not None:
         connection = custom_connection
     else:
-        connection = pika.BlockingConnection()
+        connection = BlockingConnection()
     channel = connection.channel()
     exchange_name = routing_key.split('.')[0]
-    channel.exchange_declare(exchange=exchange_name, exchange_type='topic')
+    channel.exchange_declare(exchange=exchange_name, exchange_type=ExchangeType.topic)
 
     channel.basic_publish(exchange=exchange_name,
                           routing_key=routing_key,
@@ -60,8 +60,8 @@ __connection = None
 def get_substained_connection(**kwargs):
     global __connection
     if __connection is None:
-        parameters = pika.ConnectionParameters(heartbeat=60, **kwargs)
-        __connection = pika.BlockingConnection(parameters)
+        parameters = ConnectionParameters(heartbeat=60, **kwargs)
+        __connection = BlockingConnection(parameters)
     return __connection
 
 
@@ -200,7 +200,7 @@ class WrappedConsumer(object):
         else:
             self.logger.warning('Connection closed, reconnect necessary: %s', reason)
 
-            if not isinstance(reason, pika.exceptions.ConnectionClosedByClient):
+            if not isinstance(reason, ConnectionClosedByClient):
                 self.reconnect()
 
     def reconnect(self):
