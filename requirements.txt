@@ -1,1 +1,1 @@
-pika
+aio-pika
