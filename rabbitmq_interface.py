@@ -13,7 +13,12 @@ if TYPE_CHECKING:
 # <-------------------- listen -------------------->
 
 
-def listen_to(loop: asyncio.AbstractEventLoop, exchange_name: str, handler: Callable[["AbstractIncomingMessage"], Awaitable[Any]]):
+def listen_to(
+    loop: asyncio.AbstractEventLoop,
+    exchange_name: str,
+    handler: Callable[["AbstractIncomingMessage"], Awaitable[Any]],
+    **connection_kwargs
+):
     """
     Returns: a stop handle to stop listening.
     """
@@ -21,7 +26,7 @@ def listen_to(loop: asyncio.AbstractEventLoop, exchange_name: str, handler: Call
     loop.run_until_complete(condition.acquire())
 
     async def listen_task():
-        connection = await connect_robust()
+        connection = await connect_robust(**connection_kwargs)
         async with connection:
             channel = await connection.channel()
 
@@ -54,6 +59,16 @@ class SustainedChannel:
     CONNECTIONS: Dict[int, "SustainedChannel"] = dict()
     LOCK = threading.Lock()
 # <-------------------- send -------------------->
+
+
+async def create_sustained_connection(**kwargs):
+    if SustainedChannel.MAIN_CONNECTION is not None:
+        raise RuntimeError("Sustained connection already exists.")
+    ret = SustainedChannel()
+    ret.conn = await connect_robust(**kwargs)
+    ret.channel = await ret.conn.channel()
+    SustainedChannel.MAIN_CONNECTION = ret
+    return ret
 
 
 async def get_sustained_connection():
@@ -91,6 +106,20 @@ def send_message_nowait(routing_key: str, message: Union[str, bytes]):
 
 
 # <-------------------- send multi-thread -------------------->
+async def create_cur_sustained_connection_thread_safe(**kwargs):
+    _id = threading.get_ident()
+    with SustainedChannel.LOCK:
+        connections = SustainedChannel.CONNECTIONS
+        ret = connections.get(_id)
+        if ret is not None:
+            raise RuntimeError("Sustained connection already exists.")
+        ret = SustainedChannel()
+        ret.conn = await connect_robust(**kwargs)
+        ret.channel = await ret.conn.channel()
+        connections[_id] = ret
+    return ret
+
+
 async def get_cur_sustained_connection_thread_safe():
     _id = threading.get_ident()
     with SustainedChannel.LOCK:
