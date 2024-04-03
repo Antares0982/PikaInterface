@@ -1,2 +1,2 @@
 # RabbitMQInterface
-Wrapped RabbitMQ interface for easy use
+Wrapped Pika interface for easy use
