@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 def listen_to(
     loop: asyncio.AbstractEventLoop,
-    exchange_name: str,
+    routing_key_prefix: str,
     handler: Callable[["AbstractIncomingMessage"], Awaitable[Any]],
     **connection_kwargs
 ):
@@ -30,17 +30,19 @@ def listen_to(
         async with connection:
             channel = await connection.channel()
 
+            exchange_name = routing_key_prefix.split('.')[0]
+
             exchange = await channel.declare_exchange(exchange_name, ExchangeType.TOPIC)
             queue = await channel.declare_queue(exchange_name, exclusive=True)
-            await queue.bind(exchange, routing_key=f'{exchange_name}.#')
+            await queue.bind(exchange, routing_key=f'{routing_key_prefix}.#')
 
             async def consume(msg: "AbstractIncomingMessage"):
                 async with msg.process():
                     await handler(msg)
             await queue.consume(consume)
-            print(f"Start listening: {exchange_name}.#")
+            print(f"Start listening: {routing_key_prefix}.#")
             await condition.wait()
-            print(f"Stopped listening: {exchange_name}.#")
+            print(f"Stopped listening: {routing_key_prefix}.#")
             await connection.close()
 
     async def stop_handle():
