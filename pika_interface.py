@@ -33,7 +33,7 @@ def listen_to(
             exchange_name = routing_key_prefix.split('.')[0]
 
             exchange = await channel.declare_exchange(exchange_name, ExchangeType.TOPIC)
-            queue = await channel.declare_queue(exchange_name, exclusive=True)
+            queue = await channel.declare_queue('', exclusive=True)
             await queue.bind(exchange, routing_key=f'{routing_key_prefix}.#')
 
             async def consume(msg: "AbstractIncomingMessage"):
