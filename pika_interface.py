@@ -23,9 +23,11 @@ def listen_to(
     Returns: a stop handle to stop listening.
     """
     condition = asyncio.Condition()
-    loop.run_until_complete(condition.acquire())
+    loop.create_task(condition.acquire())
 
     async def listen_task():
+        while not condition.locked():
+            await asyncio.sleep(0.1)
         connection = await connect_robust(**connection_kwargs)
         async with connection:
             channel = await connection.channel()
