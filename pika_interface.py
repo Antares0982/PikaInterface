@@ -1,14 +1,13 @@
+__VERSION__ = "1.0.0"
+
 import asyncio
 import threading
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional, Union
+from typing import Any, Awaitable, Callable, Union
 
 from aio_pika import ExchangeType, Message, connect_robust
-
-
-if TYPE_CHECKING:
-    from aio_pika.channel import AbstractChannel
-    from aio_pika.connection import AbstractConnection
-    from aio_pika.message import AbstractIncomingMessage
+from aio_pika.channel import AbstractChannel
+from aio_pika.connection import AbstractConnection
+from aio_pika.message import AbstractIncomingMessage
 
 # <-------------------- listen -------------------->
 
@@ -48,6 +47,8 @@ def listen_to(
             await connection.close()
 
     async def stop_handle():
+        if not condition.locked():  # in case the listen task crashed
+            return
         async with condition:
             condition.notify()
 
@@ -59,42 +60,70 @@ def listen_to(
 class SustainedChannel:
     conn: "AbstractConnection"
     channel: "AbstractChannel"
-    MAIN_CONNECTION: Optional["SustainedChannel"] = None
-    CONNECTIONS: Dict[int, "SustainedChannel"] = dict()
-    LOCK = threading.Lock()
+
+    @classmethod
+    async def create(cls, **kwargs):
+        ret = cls()
+        cls.conn = await connect_robust(**kwargs)
+        cls.channel = await cls.conn.channel()
+        return ret
+
+
+class _ConnectionHolder:
+    main_connection: SustainedChannel | None = None
+    connections: dict[int, SustainedChannel] = dict()
+    lock = threading.Lock()
+
+
+_connection_holder = _ConnectionHolder()
 # <-------------------- send -------------------->
 
 
-async def create_sustained_connection(**kwargs):
-    if SustainedChannel.MAIN_CONNECTION is not None:
+async def create_sustained_connection(**kwargs) -> SustainedChannel:
+    """
+    Create a global connection object.
+    This global connection will be retrieved by `get_sustained_connection`.
+    """
+    if _connection_holder.main_connection is not None:
         raise RuntimeError("Sustained connection already exists.")
-    ret = SustainedChannel()
-    ret.conn = await connect_robust(**kwargs)
-    ret.channel = await ret.conn.channel()
-    SustainedChannel.MAIN_CONNECTION = ret
+    ret = await SustainedChannel.create(**kwargs)
+    _connection_holder.main_connection = ret
     return ret
 
 
-async def get_sustained_connection():
-    ret = SustainedChannel.MAIN_CONNECTION
+async def get_sustained_connection() -> SustainedChannel:
+    """
+    Get the global connection object.
+
+    Note:
+        If called before `create_sustained_connection`,
+        it will create a new connection without any argument.
+    """
+    ret = _connection_holder.main_connection
     if ret is None:
-        ret = SustainedChannel()
-        ret.conn = await connect_robust()
-        ret.channel = await ret.conn.channel()
-        SustainedChannel.MAIN_CONNECTION = ret
+        ret = await SustainedChannel.create()
+        _connection_holder.main_connection = ret
     return ret
 
 
-async def close_sustained_connection():
-    if SustainedChannel.MAIN_CONNECTION is not None:
-        conn = SustainedChannel.MAIN_CONNECTION
+async def close_sustained_connection() -> None:
+    """
+    Close the global connection object.
+    Do nothing when connection is not created.
+    """
+    if _connection_holder.main_connection is not None:
+        conn = _connection_holder.main_connection
         await conn.channel.close()
         await conn.conn.close()
-        SustainedChannel.MAIN_CONNECTION = None
+        _connection_holder.main_connection = None
 
 
-async def send_message(routing_key: str, message: Union[str, bytes]):
-    chan = (await get_sustained_connection()).channel
+async def send_message(routing_key: str, message: Union[str, bytes], channel: "AbstractChannel" | None = None):
+    """
+    Send a message.
+    If `channel` is not passed, use the global connection to get channel.
+    """
+    chan = (await get_sustained_connection()).channel if channel is None else channel
     exchange_name = routing_key.split('.')[0]
     exchange = await chan.declare_exchange(name=exchange_name, type=ExchangeType.TOPIC)
     await exchange.publish(
@@ -103,47 +132,64 @@ async def send_message(routing_key: str, message: Union[str, bytes]):
     )
 
 
-def send_message_nowait(routing_key: str, message: Union[str, bytes]):
-    loop = asyncio.get_event_loop()
-    loop.create_task(send_message(routing_key, message))
+def send_message_nowait(
+    routing_key: str,
+    message: Union[str, bytes],
+    channel: "AbstractChannel" | None = None,
+    loop: asyncio.AbstractEventLoop | None = None
+):
+    """
+    Send a message, without blocking wait.
+    If `channel` is not passed, use the global connection to get channel.
+    If `loop` is not passed, use the running loop.
+    """
+    if loop is None:
+        loop = asyncio.get_running_loop()
+    loop.create_task(send_message(routing_key, message, channel))
 # <-------------------- send end -------------------->
 
 
 # <-------------------- send multi-thread -------------------->
 async def create_cur_sustained_connection_thread_safe(**kwargs):
+    """
+    Create a thread-local connection object.
+    This thread-local connection will be retrieved by `get_cur_sustained_connection_thread_safe`.
+    """
     _id = threading.get_ident()
-    with SustainedChannel.LOCK:
-        connections = SustainedChannel.CONNECTIONS
+    with _connection_holder.lock:
+        connections = _connection_holder.connections
         ret = connections.get(_id)
         if ret is not None:
             raise RuntimeError("Sustained connection already exists.")
-        ret = SustainedChannel()
-        ret.conn = await connect_robust(**kwargs)
-        ret.channel = await ret.conn.channel()
+        ret = await SustainedChannel.create(**kwargs)
         connections[_id] = ret
     return ret
 
 
 async def get_cur_sustained_connection_thread_safe():
+    """
+    Get the thread-local connection object.
+    If called before `create_cur_sustained_connection_thread_safe`,
+    it will create a new connection without any argument.
+    """
     _id = threading.get_ident()
-    with SustainedChannel.LOCK:
-        connections = SustainedChannel.CONNECTIONS
-        _new = False
+    with _connection_holder.lock:
+        connections = _connection_holder.connections
         ret = connections.get(_id)
         if ret is None:
-            _new = True
-            ret = SustainedChannel()
+            ret = await SustainedChannel.create()
             connections[_id] = ret
-    if _new:
-        ret.conn = await connect_robust()
-        ret.channel = await ret.conn.channel()
     return ret
 
 
 async def close_sustained_connections_thread_safe():
-    with SustainedChannel.LOCK:
-        connections = SustainedChannel.CONNECTIONS
-        SustainedChannel.CONNECTIONS = dict()
+    """
+    Close all the thread-local connections object.
+    Do nothing when connection is not created.
+    """
+    with _connection_holder.lock:
+        connections = _connection_holder.connections
+        _connection_holder.connections = dict()
     for conn in connections.values():
         await conn.channel.close()
         await conn.conn.close()
@@ -151,15 +197,23 @@ async def close_sustained_connections_thread_safe():
 
 
 async def close_cur_sustained_connection_thread_safe():
+    """
+    Close the thread-local connection object.
+    Do nothing when connection is not created.
+    """
     _id = threading.get_ident()
-    with SustainedChannel.LOCK:
-        ret = SustainedChannel.CONNECTIONS.pop(_id, None)
+    with _connection_holder.lock:
+        ret = _connection_holder.connections.pop(_id, None)
     if ret is not None:
         await ret.channel.close()
         await ret.conn.close()
 
 
 async def send_message_thread_safe(routing_key: str, message: Union[str, bytes]):
+    """
+    Send a message.
+    This is only used for sending message with thread-local connection maintained by this module.
+    """
     chan = (await get_cur_sustained_connection_thread_safe()).channel
     exchange_name = routing_key.split('.')[0]
     exchange = await chan.declare_exchange(name=exchange_name, type=ExchangeType.TOPIC)
@@ -169,7 +223,12 @@ async def send_message_thread_safe(routing_key: str, message: Union[str, bytes])
     )
 
 
-def send_message_nowait_thread_safe(routing_key: str, message: Union[str, bytes]):
-    loop = asyncio.get_event_loop()
+def send_message_nowait_thread_safe(routing_key: str, message: Union[str, bytes], loop: asyncio.AbstractEventLoop | None = None):
+    """
+    Send a message, without blocking wait.
+    This is only used for sending message with thread-local connection maintained by this module.
+    """
+    if loop is None:
+        loop = asyncio.get_running_loop()
     loop.create_task(send_message_thread_safe(routing_key, message))
 # <-------------------- send multi-thread end -------------------->
