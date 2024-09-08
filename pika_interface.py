@@ -58,8 +58,8 @@ def listen_to(
 
 
 class SustainedChannel:
-    conn: "AbstractConnection"
-    channel: "AbstractChannel"
+    conn: AbstractConnection
+    channel: AbstractChannel
 
     @classmethod
     async def create(cls, **kwargs):
@@ -118,7 +118,7 @@ async def close_sustained_connection() -> None:
         _connection_holder.main_connection = None
 
 
-async def send_message(routing_key: str, message: Union[str, bytes], channel: "AbstractChannel" | None = None):
+async def send_message(routing_key: str, message: Union[str, bytes], channel: AbstractChannel | None = None):
     """
     Send a message.
     If `channel` is not passed, use the global connection to get channel.
@@ -135,7 +135,7 @@ async def send_message(routing_key: str, message: Union[str, bytes], channel: "A
 def send_message_nowait(
     routing_key: str,
     message: Union[str, bytes],
-    channel: "AbstractChannel" | None = None,
+    channel: AbstractChannel | None = None,
     loop: asyncio.AbstractEventLoop | None = None
 ):
     """
